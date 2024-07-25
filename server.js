@@ -684,7 +684,8 @@ connectToCLIPServerLHE();
 function getVideoId(result) {
   const elem = result;
   let filename = elem.split("/");
-  let videoid = filename[0];
+  let framenumber = filename[0];
+  let videoid = framenumber.substring(0, framenumber.lastIndexOf("_"));
   return videoid;
 }
 
@@ -1023,7 +1024,7 @@ async function queryText(clientId, queryInput) {
       results: Array.from(commonFrames),
       totalresults: totalDocuments,
       scores: new Array(commonFrames.size).fill(1),
-      dataset: "v3c",
+      dataset: "esop",
     };
 
     if (clientSettings.videoFiltering === "first") {
@@ -1068,7 +1069,7 @@ async function queryVideoID(clientId, queryInput) {
         .sort({ videoid: 1 });
     } else if (
       queryInput.query === "*" &&
-      queryInput.dataset === "mvk" &&
+      (queryInput.dataset === "mvk" || queryInput.dataset === "esop") &&
       queryInput.videofiltering === "first"
     ) {
       cursor = await collection
