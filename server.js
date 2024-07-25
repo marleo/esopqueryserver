@@ -61,6 +61,7 @@ let settingsMap = new Map();
 const http = require("http");
 const express = require("express");
 const { LocalConfig } = require("./local-config");
+const { off } = require("process");
 const app = express();
 app.use(cors()); // Enable CORS for all routes
 const port = 8080;
@@ -148,8 +149,8 @@ wss.on("connection", (ws) => {
       getVideoFPS(clientId, msg.content, msg.correlationId);
     } else if (msg.content.type === "videosummaries") {
       getVideoSummaries(clientId, msg.content);
-    } else if (msg.content.type === "ocr-text") {
-      queryOCRText(clientId, msg.content);
+    } else if (msg.content.type === "ocr-text" || msg.content.type === "speech") {
+      queryText(clientId, msg.content);
     } else if (msg.content.type === "metadata") {
       queryMetadata(clientId, msg.content);
     } else if (msg.content.type === "speech") {
@@ -932,38 +933,50 @@ async function getVideoSummaries(clientId, queryInput) {
   }
 }
 
-async function queryOCRText(clientId, queryInput) {
+async function queryText(clientId, queryInput) {
   try {
     let clientSettings = settingsMap.get(clientId);
     const database = mongoclient.db(config.config_MONGODB);
-    const collection = database.collection("texts");
+
+    let collectionType = "";
+
+    if(queryInput.type == "ocr-text") {
+      collectionType = "texts";
+    } else if(queryInput.type == "speech") {
+      collectionType = "speech";
+    }
+
+    const collection = database.collection(collectionType);
     let page = parseInt(queryInput.selectedpage);
     let pageSize = parseInt(queryInput.resultsperpage);
     let commonFrames = new Set(); //To find frames with all words
     let totalDocuments = 0; // Total number of documents
     let words = queryInput.query.split(/\s+/); // Split query input into words
+    const regexQuery = new RegExp(words[0], 'i');
+    
     words = words.map((word) => word.toLowerCase());
     
     console.log(console.log("received from client: %s (%s)", queryInput, clientId));
 
-    if (words.length === 1) {
-      // Look for exact matches
+    if (words.length === 1) {   
       const cursor = collection.find({
-        text: words[0],
+        text: { $regex: regexQuery },
       });
-
+    
       totalDocuments = await cursor.count(); // Get total count of documents
-
       const documents = await cursor.toArray(); // Get documents for the current page
-
+    
       let framesSet = new Set();
       documents.forEach((doc) => {
-        doc.frames.forEach((frame) => framesSet.add(frame));
+        console.log("Processing document:", doc);
+        doc.frames.forEach((frame) => {
+          console.log("Adding frame to set:", frame);
+          framesSet.add(frame);
+        });
       });
-
-      let framesArray = Array.from(framesSet); // Convert set to array to apply pagination
-
-      totalDocuments = framesArray.length;
+    
+      let framesArray = Array.from(framesSet); // Convert set to array to apply pagination    
+      totalDocuments = framesArray.length;   
 
       // Skip frames based on page number
       let frameSkip = (page - 1) * pageSize;
@@ -971,7 +984,7 @@ async function queryOCRText(clientId, queryInput) {
       if (framesArray.length > pageSize) {
         framesArray = framesArray.slice(frameSkip, frameSkip + pageSize);
       }
-
+    
       commonFrames = new Set(framesArray);
     } else {
       // Use exact match for multiple words
@@ -1005,7 +1018,7 @@ async function queryOCRText(clientId, queryInput) {
     }
 
     let response = {
-      type: "ocr-text",
+      type: collectionType,
       num: commonFrames.size,
       results: Array.from(commonFrames),
       totalresults: totalDocuments,
@@ -1091,7 +1104,7 @@ async function queryVideoID(clientId, queryInput) {
             continue;
           }
           videoIds.push(document.videoid);
-          results.push(document.videoid + "/" + shot.keyframe);
+          results.push(shot.keyframe);
           scores.push(1);
         }
       });
@@ -1146,55 +1159,6 @@ async function queryMetadata(clientId, queryInput) {
 
     let response = {
       type: "metadata",
-      num: results.length,
-      results: results,
-      totalresults: results.length,
-      scores: scores,
-      dataset: "v3c",
-    };
-
-    clientWS = clients.get(clientId);
-    clientWS.send(JSON.stringify(response));
-  } catch (error) {
-    console.log("error with mongodb: " + error);
-    await mongoclient.close();
-  }
-}
-
-async function querySpeech(clientId, queryInput) {
-  try {
-    let clientSettings = settingsMap.get(clientId);
-    const database = mongoclient.db(config.config_MONGODB); // Replace with your database name
-    const collection = database.collection("videos"); // Replace with your collection name
-
-    const regexQuery = new RegExp(queryInput.query, "i"); // Create a case-insensitive regular expression
-
-    const cursor = await collection.find({
-      $or: [
-        { "speech.text": { $regex: regexQuery } },
-        { "speech.keywords": { $regex: regexQuery } },
-      ],
-    });
-
-    let results = [];
-    let scores = [];
-    let videoIds = Array();
-    await cursor.forEach((document) => {
-      for (const shot of document.shots) {
-        if (
-          clientSettings.videoFiltering === "first" &&
-          videoIds.includes(document.videoid)
-        ) {
-          continue;
-        }
-        videoIds.push(document.videoid);
-        results.push(document.videoid + "/" + shot.keyframe);
-        scores.push(1);
-      }
-    });
-
-    let response = {
-      type: "speech",
       num: results.length,
       results: results,
       totalresults: results.length,
