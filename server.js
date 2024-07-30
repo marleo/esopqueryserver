@@ -988,36 +988,53 @@ async function queryText(clientId, queryInput) {
     
       commonFrames = new Set(framesArray);
     } else {
-      // Use exact match for multiple words
-      const cursor = collection.find({
-        text: { $in: words },
-      });
-
-      totalDocuments = await cursor.count(); // Get total count of documents
-      const documents = await cursor.toArray(); // Get all matching documents
-      let framesSets = documents.map((doc) => new Set(doc.frames));
-
-      // Find the intersection of all frame sets
-      let commonFramesSet = new Set();
-      if (framesSets.length > 0) {
-        commonFramesSet = framesSets.reduce(
-          (a, b) => new Set([...a].filter((x) => b.has(x)))
-        );
-      }
-
-      let framesArray = Array.from(commonFramesSet); // Convert set to array to apply pagination
-      totalDocuments = framesArray.length;
-
-      // Skip frames based on page number
-      let frameSkip = (page - 1) * pageSize;
-
-      if (framesArray.length > pageSize) {
+      // Split words from the query, trim whitespace, and filter out empty words
+      let words = queryInput.query.split(/\s+/).map(word => word.trim()).filter(word => word.length > 0);
+    
+      if (words.length === 0) {
+        commonFrames = new Set(); // No conditions to query
+      } else {
+        // Create a map to track the frames from documents matching each word
+        let framesMap = new Map();
+    
+        for (let word of words) {
+          let regex = new RegExp(word, 'i');
+          
+          let matchedDocuments = await collection.find({
+            text: { $regex: regex }
+          }).toArray();
+          
+          matchedDocuments.forEach(doc => {
+            doc.frames.forEach(frame => {
+              if (framesMap.has(frame)) {
+                framesMap.get(frame).add(word);
+              } else {
+                framesMap.set(frame, new Set([word]));
+              }
+            });
+          });
+        }
+    
+        // Filter frames to include only those that are present in documents matching all words
+        let commonFramesSet = new Set();
+        framesMap.forEach((wordsSet, frame) => {
+          if (wordsSet.size === words.length) {
+            commonFramesSet.add(frame);
+          }
+        });
+    
+        // Convert set to array for pagination
+        let framesArray = Array.from(commonFramesSet);
+        totalDocuments = framesArray.length;
+    
+        // Pagination: Skip frames based on page number
+        let frameSkip = (page - 1) * pageSize;
         framesArray = framesArray.slice(frameSkip, frameSkip + pageSize);
+    
+        commonFrames = new Set(framesArray);
       }
-
-      commonFrames = new Set(framesArray);
     }
-
+    
     let response = {
       type: collectionType,
       num: commonFrames.size,
