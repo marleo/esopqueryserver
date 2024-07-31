@@ -700,6 +700,10 @@ function extractFrameNumber(filename) {
   return match ? Number(match[1]) : null;
 }
 
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 //////////////////////////////////////////////////////////////////
 // MongoDB Queries
 //////////////////////////////////////////////////////////////////
@@ -953,7 +957,8 @@ async function queryText(clientId, queryInput) {
     let commonFrames = new Set(); //To find frames with all words
     let totalDocuments = 0; // Total number of documents
     let words = queryInput.query.split(/\s+/); // Split query input into words
-    const regexQuery = new RegExp(words[0], 'i');
+    const escapedWords = words.map((word) => escapeRegExp(word));
+    const regexQuery = new RegExp(escapedWords[0], 'i');
     
     words = words.map((word) => word.toLowerCase());
     
@@ -997,7 +1002,7 @@ async function queryText(clientId, queryInput) {
         // Create a map to track the frames from documents matching each word
         let framesMap = new Map();
     
-        for (let word of words) {
+        for (let word of escapedWords) {
           let regex = new RegExp(word, 'i');
           
           let matchedDocuments = await collection.find({
