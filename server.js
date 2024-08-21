@@ -10,10 +10,11 @@ const LOGFILE = "vbsqueryserverlog.json";
 const DISTINCTIVE_L2DIST1 = 10.0;
 const DISTINCTIVE_L2DIST2 = 15.0;
 
+const CLIPSERVERURL = "ws://" + config.config_CLIP_SERVER;
+console.log(CLIPSERVERURL);
+
 const wss = new WebSocket.Server({ noServer: true }); //web socket to client
-let clipWebSocketV3C = null;
-let clipWebSocketMVK = null;
-let clipWebSocketLHE = null;
+let clipWebSocket = null;
 
 const mongouri = "mongodb://" + config.config_MONGODB_SERVER; // Replace with your MongoDB connection string
 const MongoClient = require("mongodb").MongoClient;
@@ -21,20 +22,10 @@ let mongoclient = null;
 connectMongoDB();
 
 // Variables to store the parameter values
-let text,
-  concept,
-  object,
-  place,
-  year,
-  month,
-  day,
-  weekday,
-  filename,
-  similarto;
+let filename;
 
 //store submitted videos
 let submittedVideos = [];
-
 class QuerySettings {
   constructor(
     combineCLIPwithMongo = false,
@@ -79,6 +70,10 @@ wss.on("connection", (ws) => {
     broadCastMessage({ type: "updatesubmissions", videoId: submittedVideos });
   }
 
+  if(clipWebSocket === null) {
+    connectToClipServer();
+  }
+
   ws.on("message", (message) => {
     console.log("received from client: %s (%s)", message, clientId);
     msg = JSON.parse(message);
@@ -87,15 +82,6 @@ wss.on("connection", (ws) => {
         console.log("Error writing file", err);
       }
     });
-
-    let clipWebSocket = null;
-    if (msg.content.dataset == "v3c") {
-      clipWebSocket = clipWebSocketV3C;
-    } else if (msg.content.dataset == "mvk") {
-      clipWebSocket = clipWebSocketMVK;
-    } else if (msg.content.dataset == "lhe") {
-      clipWebSocket = clipWebSocketLHE;
-    }
 
     videoFiltering = msg.content.videofiltering;
     clientSettings.videoFiltering = videoFiltering;
@@ -159,7 +145,7 @@ wss.on("connection", (ws) => {
                   clipQueries.push(tmpClipQuery.substring(0, idxS));
                   tmpClipQuery = tmpClipQuery.substring(idxS + 1);
                 } else {
-                  clipQueries.push(tmpClipQuery); //last one
+                  clipQueries.push(tmpClipQuery);
                 }
               } while (idxS > -1);
               console.log("found " + clipQueries.length + " temporal queries:");
@@ -242,6 +228,93 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function connectToClipServer() {
+  try {
+    console.log("trying to connect to CLIP...");
+    clipWebSocket = new WebSocket(CLIPSERVERURL);
+
+    clipWebSocket.on("open", () => {
+      console.log("connected to CLIP server");
+    });
+
+    clipWebSocket.on("close", (event) => {
+      // Handle connection closed
+      clipWebSocket.close();
+      clipWebSocket = null;
+      console.log(
+        "Connection to CLIP closed",
+        event.code,
+        event.reason
+      );
+    });
+
+    pendingCLIPResults = Array();
+
+    clipWebSocket.on("message", (message) => {
+      handleCLIPResponse(message);
+    });
+
+    clipWebSocket.on("error", (event) => {
+      console.log("Connection to CLIP refused");
+    });
+  } catch (error) {
+    console.log("Cannot connect to CLIP server");
+    console.log(error);
+  }
+}
+
+function handleCLIPResponse(message) {
+  msg = JSON.parse(message);
+  numbefore = msg.results.length;
+  clientId = msg.clientId;
+  clientWS = clients.get(clientId);
+  let clientSettings = settingsMap.get(clientId);
+
+  console.log("received %s results from CLIP server", msg.num);
+
+    let filteredResults = Array();
+    let filteredResultsIdx = Array();
+    let filteredScores = Array();
+    let videoIds = Array();
+    let countFiltered = 0;
+    for (let i = 0; i < msg.results.length; i++) {
+      let videoid = getVideoId(msg.results[i]);
+      if (
+        clientSettings.videoFiltering === "first" &&
+        videoIds.includes(videoid)
+      ) {
+        countFiltered++;
+        continue;
+      }
+      videoIds.push(videoid);
+      filteredResults.push(msg.results[i].split("/")[1]);
+      filteredResultsIdx.push(msg.resultsidx[i]);
+      filteredScores.push(msg.scores[i]);
+    }
+
+    msg.results = filteredResults;
+    msg.resultsidx = filteredResultsIdx;
+    msg.scores = filteredScores;
+    msg.totalresults = msg.totalresults - countFiltered;
+    msg.num = msg.num - countFiltered;
+    console.log(
+      "forwarding %d results (current before=%d) to client %s",
+      msg.totalresults,
+      numbefore,
+      clientId
+    );
+    console.log(JSON.stringify(msg));
+    clientWS.send(JSON.stringify(msg));
+
+    // Append jsonString to the file
+    msg.clientId = clientId;
+    fs.appendFile(LOGFILE, JSON.stringify(msg), function (err) {
+      if (err) {
+        console.log("Error writing file", err);
+      }
+    });
+}
+
 //////////////////////////////////////////////////////////////////
 // MongoDB Queries
 //////////////////////////////////////////////////////////////////
@@ -289,8 +362,6 @@ async function getVideoFPS(clientId, queryInput, correlationId) {
   } catch (error) {
     console.log("error with mongodb: " + error);
     await mongoclient.close();
-  } finally {
-    //await mongoclient.close();
   }
 }
 
@@ -314,8 +385,6 @@ async function getVideoInfo(clientId, queryInput) {
   } catch (error) {
     console.log("error with mongodb: " + error);
     await mongoclient.close();
-  } finally {
-    //await mongoclient.close();
   }
 }
 
@@ -510,7 +579,6 @@ async function queryVideoID(clientId, queryInput) {
           scores.push(1);
         }
       });
-
       response.num = results.length;
       response.totalresults = results.length;
       response.scores = scores;
