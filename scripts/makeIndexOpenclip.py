@@ -67,40 +67,20 @@ async def handler(websocket):
                         D, I = similaritysearch(int(event['query']), k)
                     elif event['type'] == 'file-similarityquery':
                         print(f'trying to load {event["query"]} from {keyframe_base_root} {event["pathprefix"]}')
-                        image = preprocess(Image.open(os.path.join(keyframe_base_root, event['pathprefix'], event['query']))).unsqueeze(0).to(device)
+                        image = preprocess(Image.open(os.path.join(keyframe_base_root,event['pathprefix'],event['query']))).unsqueeze(0).to(device)
                         image_features = model.encode_image(image)
                         image_features = image_features.cpu()
-                        print('shape:', image_features.shape)
+                        print('shape:',image_features.shape)
+                        mylist = image_features[0].tolist()
                         print('features extracted')
-                        
                         D, I = search(image_features, k)
                         print('file-similarity search finished')
-                        
-                        confidence_threshold = float(event.get('confidence_threshold', 0.7))  # default to 0.7 if not provided
-
-                        filtered_D, filtered_I = [], []
-                        
-                        for score, idx in zip(D[0], I[0]):
-                            if score >= confidence_threshold:  
-                                filtered_D.append(score)
-                                filtered_I.append(idx)
-
-                        D = [filtered_D]
-                        I = [filtered_I]
-
-                        kfresults, kfresultsidx, kfscores = filterAndLabelResults(I, D, resultsPerPage, selectedPage)
-                        results = {
-                            'num': len(kfresults),
-                            'clientId': clientId,
-                            'totalresults': len(kfresults),
-                            'results': kfresults,
-                            'resultsidx': kfresultsidx,
-                            'dataset': 'v3c',
-                            'scores': kfscores
-                        }
-                        tmp = json.dumps(results)
-                        await websocket.send(tmp)
-
+                
+                    kfresults, kfresultsidx, kfscores = filterAndLabelResults(I, D, resultsPerPage, selectedPage)
+                    results = {'num':len(kfresults), 'clientId':clientId, 'totalresults':k, 'results':kfresults, 'resultsidx':kfresultsidx, 'dataset':'v3c', 'scores':kfscores }
+                    tmp = json.dumps(results)
+                    #print(tmp)
+                    await websocket.send(tmp)
     except ConnectionClosedOK:
         print("Connection closed gracefully.")
     except Exception as e:
