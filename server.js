@@ -228,6 +228,10 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+//////////////////////////////////////////////////////////////////
+// CLIP Queries
+//////////////////////////////////////////////////////////////////
+
 function connectToClipServer() {
   try {
     console.log("trying to connect to CLIP...");
