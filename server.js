@@ -411,9 +411,6 @@ async function queryText(clientId, queryInput) {
     let commonFrames = new Set();
     let totalDocuments = 0;
     let words = queryInput.query.split(/\s+/);
-    const escapedWords = words.map((word) => escapeRegExp(word));
-    const regexQuery = new RegExp(escapedWords[0], "i");
-
     words = words.map((word) => word.toLowerCase());
 
     console.log(
@@ -422,7 +419,7 @@ async function queryText(clientId, queryInput) {
 
     if (words.length === 1) {
       const cursor = collection.find({
-        text: { $regex: regexQuery },
+        text: words[0],
       });
 
       totalDocuments = await cursor.count();
@@ -430,9 +427,7 @@ async function queryText(clientId, queryInput) {
 
       let framesSet = new Set();
       documents.forEach((doc) => {
-        console.log("Processing document:", doc);
         doc.frames.forEach((frame) => {
-          console.log("Adding frame to set:", frame);
           framesSet.add(frame);
         });
       });
@@ -456,35 +451,22 @@ async function queryText(clientId, queryInput) {
       if (words.length === 0) {
         commonFrames = new Set();
       } else {
-        let framesMap = new Map();
-
-        for (let word of escapedWords) {
-          let regex = new RegExp(word, "i");
-
-          let matchedDocuments = await collection
-            .find({
-              text: { $regex: regex },
-            })
-            .toArray();
-
-          matchedDocuments.forEach((doc) => {
-            doc.frames.forEach((frame) => {
-              if (framesMap.has(frame)) {
-                framesMap.get(frame).add(word);
-              } else {
-                framesMap.set(frame, new Set([word]));
-              }
-            });
-          });
-        }
-
-        let commonFramesSet = new Set();
-        framesMap.forEach((wordsSet, frame) => {
-          if (wordsSet.size === words.length) {
-            commonFramesSet.add(frame);
-          }
+        const cursor = collection.find({
+          text: { $in: words },
         });
 
+        totalDocuments = await cursor.count();
+        const documents = await cursor.toArray();
+        let framesSets = documents.map((doc) => new Set(doc.frames));
+
+        // Find the intersection of all frame sets
+        let commonFramesSet = new Set();
+        if (framesSets.length > 0) {
+          commonFramesSet = framesSets.reduce(
+            (a, b) => new Set([...a].filter((x) => b.has(x)))
+          );
+        }
+        
         let framesArray = Array.from(commonFramesSet);
         totalDocuments = framesArray.length;
 
